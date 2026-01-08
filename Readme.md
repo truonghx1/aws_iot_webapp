@@ -452,3 +452,504 @@ web_app/
 Bạn muốn tôi hướng dẫn chi tiết tính năng nào không?
 
 Made changes.
+
+User: 1. Tôi muốn tạo ra 1 rest API chẳng hạn, khi request vào link rest api đó, thì sẽ public message ra topic đó, giống như bật đèn và tắt đèn vậy.
+2. Hãy nêu ý tưởng thực hiện OTA update
+
+GitHub Copilot: ## 1. TẠO REST API ĐỂ PUBLISH MESSAGE TỚI IOT TOPIC
+
+Tôi sẽ hướng dẫn bạn tạo REST API sử dụng **AWS API Gateway + Lambda**.
+
+### Kiến trúc:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │────▶│ API Gateway │────▶│   Lambda    │────▶│  AWS IoT    │
+│ (Browser/   │     │  REST API   │     │  Function   │     │   Core      │
+│  Postman)   │◀────│             │◀────│             │◀────│             │
+└─────────────┘     └─────────────┘     └─────────────┘     └─────────────┘
+                                                                   │
+                         GET /led?action=on                        │
+                         POST /command {"cmd": "LED_ON"}           ▼
+                                                            ┌─────────────┐
+                                                            │    ESP32    │
+                                                            └─────────────┘
+```
+
+### BƯỚC 1: Tạo Lambda Function
+
+#### 1.1. Mở Lambda Console
+1. Tìm kiếm **"Lambda"** trong AWS Console
+2. Click **"Create function"**
+
+#### 1.2. Cấu hình Function
+- **Function name:** `IoT_PublishCommand`
+- **Runtime:** `Python 3.12` hoặc `Node.js 20.x`
+- **Architecture:** `x86_64`
+- Click **"Create function"**
+
+#### 1.3. Thêm code cho Lambda (Python)
+
+```python
+import json
+import boto3
+
+# Khởi tạo IoT Data client
+iot_client = boto3.client('iot-data', region_name='eu-central-1')
+
+# Topic để gửi lệnh
+TOPIC = 'cmd/esp32'
+
+def lambda_handler(event, context):
+    """
+    REST API để điều khiển ESP32 qua AWS IoT
+    
+    Endpoints:
+    - GET  /led?action=on|off
+    - POST /command  {"command": "LED_ON", ...}
+    """
+    
+    try:
+        # Lấy HTTP method và parameters
+        http_method = event.get('httpMethod', 'GET')
+        
+        # Xử lý GET request (đơn giản)
+        if http_method == 'GET':
+            # Lấy query parameters
+            params = event.get('queryStringParameters') or {}
+            action = params.get('action', '').upper()
+            
+            if action == 'ON':
+                command = 'LED_ON'
+            elif action == 'OFF':
+                command = 'LED_OFF'
+            else:
+                return response(400, {'error': 'Invalid action. Use ?action=on or ?action=off'})
+            
+            payload = {
+                'command': command,
+                'source': 'REST_API',
+                'timestamp': context.aws_request_id
+            }
+        
+        # Xử lý POST request (linh hoạt hơn)
+        elif http_method == 'POST':
+            body = json.loads(event.get('body', '{}'))
+            payload = {
+                'command': body.get('command', 'UNKNOWN'),
+                'source': 'REST_API',
+                'data': body.get('data', {}),
+                'timestamp': context.aws_request_id
+            }
+        
+        else:
+            return response(405, {'error': 'Method not allowed'})
+        
+        # Publish tới IoT Topic
+        iot_client.publish(
+            topic=TOPIC,
+            qos=0,
+            payload=json.dumps(payload)
+        )
+        
+        return response(200, {
+            'success': True,
+            'message': f'Published to {TOPIC}',
+            'payload': payload
+        })
+        
+    except Exception as e:
+        return response(500, {'error': str(e)})
+
+
+def response(status_code, body):
+    """Helper để tạo API Gateway response"""
+    return {
+        'statusCode': status_code,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',  # CORS
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+        },
+        'body': json.dumps(body)
+    }
+```
+
+#### 1.4. Thêm quyền IoT cho Lambda
+1. Trong Lambda function, click tab **"Configuration"** → **"Permissions"**
+2. Click vào **Role name** (sẽ mở IAM)
+3. Click **"Add permissions"** → **"Attach policies"**
+4. Tìm và chọn **"AWSIoTDataAccess"**
+5. Click **"Add permissions"**
+
+### BƯỚC 2: Tạo API Gateway
+
+#### 2.1. Mở API Gateway Console
+1. Tìm kiếm **"API Gateway"**
+2. Click **"Create API"**
+3. Chọn **"REST API"** → **"Build"**
+
+#### 2.2. Cấu hình API
+- **API name:** `ESP32_Control_API`
+- **Description:** `REST API to control ESP32 via IoT`
+- **Endpoint Type:** `Regional`
+- Click **"Create API"**
+
+#### 2.3. Tạo Resource và Method
+
+**Tạo resource `/led`:**
+1. Click **"Create resource"**
+2. **Resource name:** `led`
+3. **Resource path:** `/led`
+4. ✅ Tick **"Enable API Gateway CORS"**
+5. Click **"Create resource"**
+
+**Thêm GET method:**
+1. Chọn resource `/led`
+2. Click **"Create method"**
+3. **Method type:** `GET`
+4. **Integration type:** `Lambda Function`
+5. **Lambda function:** `IoT_PublishCommand`
+6. Click **"Create method"**
+
+**Tạo resource `/command` cho POST:**
+1. Lặp lại tương tự với resource `/command`
+2. Thêm method **POST**
+
+#### 2.4. Deploy API
+1. Click **"Deploy API"**
+2. **Stage:** Chọn **"[New Stage]"**
+3. **Stage name:** `prod`
+4. Click **"Deploy"**
+
+#### 2.5. Lấy URL
+Sau khi deploy, bạn sẽ có URL như:
+```
+https://abc123xyz.execute-api.eu-central-1.amazonaws.com/prod
+```
+
+### BƯỚC 3: Test API
+
+Tôi sẽ tạo file test cho bạn: 
+
+Created [](file:///d%3A/GIT/aws_iot_webapp/web_app/api-test.html)
+
+Tôi cũng tạo thêm file Lambda function mẫu để bạn copy: 
+
+Created [](file:///d%3A/GIT/aws_iot_webapp/lambda/iot_control_lambda.py)
+
+### Tóm tắt REST API:
+
+| Endpoint | Method | Mô tả | Ví dụ |
+|----------|--------|-------|-------|
+| `/led?action=on` | GET | Bật đèn | `curl https://api.../led?action=on` |
+| `/led?action=off` | GET | Tắt đèn | `curl https://api.../led?action=off` |
+| `/command` | POST | Lệnh tùy chỉnh | `curl -X POST -d '{"command":"MOTOR_START"}'` |
+| `/status` | GET | Kiểm tra API | `curl https://api.../status` |
+
+---
+
+## 2. Ý TƯỞNG OTA UPDATE CHO ESP32
+
+### OTA (Over-The-Air) là gì?
+
+OTA cho phép cập nhật firmware ESP32 từ xa qua internet, không cần kết nối USB.
+
+### Kiến trúc OTA với AWS:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          OTA UPDATE ARCHITECTURE                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────┐                                                               │
+│  │ Developer│                                                               │
+│  │ (Build   │                                                               │
+│  │ Firmware)│                                                               │
+│  └────┬─────┘                                                               │
+│       │                                                                     │
+│       │ 1. Upload firmware.bin                                              │
+│       ▼                                                                     │
+│  ┌──────────┐     2. Store firmware     ┌──────────────────┐               │
+│  │   S3     │◀─────────────────────────│  Lambda (CI/CD)  │               │
+│  │ Bucket   │                           │  hoặc Manual     │               │
+│  │ (Storage)│                           └──────────────────┘               │
+│  └────┬─────┘                                                               │
+│       │                                                                     │
+│       │ 3. Generate Pre-signed URL                                          │
+│       ▼                                                                     │
+│  ┌──────────────────────────────────────────────────────────────────┐      │
+│  │                      AWS IoT Core                                 │      │
+│  │  ┌─────────────────┐     ┌─────────────────┐                     │      │
+│  │  │  IoT Jobs       │     │  Device Shadow  │                     │      │
+│  │  │ (OTA Job Queue) │     │ (Version Track) │                     │      │
+│  │  └────────┬────────┘     └─────────────────┘                     │      │
+│  │           │                                                       │      │
+│  │           │ 4. Notify: "New firmware available"                   │      │
+│  └───────────┼───────────────────────────────────────────────────────┘      │
+│              │                                                              │
+│              │ Topic: $aws/things/{thingName}/jobs/notify                   │
+│              ▼                                                              │
+│  ┌──────────────────────────────────────────────────────────────────┐      │
+│  │                         ESP32 Device                              │      │
+│  │  ┌─────────────────┐     ┌─────────────────┐                     │      │
+│  │  │ 5. Receive Job  │────▶│ 6. Download FW  │                     │      │
+│  │  │    via MQTT     │     │    from S3      │                     │      │
+│  │  └─────────────────┘     └────────┬────────┘                     │      │
+│  │                                   │                               │      │
+│  │                                   ▼                               │      │
+│  │  ┌─────────────────┐     ┌─────────────────┐                     │      │
+│  │  │ 8. Reboot with  │◀────│ 7. Write to     │                     │      │
+│  │  │    new firmware │     │    OTA partition│                     │      │
+│  │  └─────────────────┘     └─────────────────┘                     │      │
+│  └──────────────────────────────────────────────────────────────────┘      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Các phương pháp OTA:
+
+| Phương pháp | Ưu điểm | Nhược điểm | Độ khó |
+|-------------|---------|------------|--------|
+| **1. AWS IoT Jobs** | Chính thống, quản lý tốt | Phức tạp | ⭐⭐⭐⭐ |
+| **2. S3 + MQTT** | Linh hoạt, dễ custom | Tự quản lý | ⭐⭐⭐ |
+| **3. HTTPS direct** | Đơn giản nhất | Không có tracking | ⭐⭐ |
+
+### Phương pháp 1: AWS IoT Jobs (Đề xuất cho production)
+
+```
+ESP32 ←──MQTT──→ AWS IoT Jobs ←── S3 (firmware storage)
+```
+
+**Quy trình:**
+1. Upload firmware lên S3
+2. Tạo IoT Job với URL firmware
+3. ESP32 nhận thông báo qua MQTT topic đặc biệt
+4. ESP32 download & flash firmware
+5. ESP32 báo cáo kết quả
+
+### Phương pháp 2: S3 + MQTT Custom (Đơn giản hơn)
+
+Tôi sẽ tạo code mẫu cho phương pháp này: 
+
+Created [](file:///d%3A/GIT/aws_iot_webapp/esp32/ota_example.ino)
+
+Created [](file:///d%3A/GIT/aws_iot_webapp/lambda/ota_trigger_lambda.py)
+
+### Cấu trúc file đã tạo:
+
+```
+aws_iot_webapp/
+├── web_app/
+│   ├── index.html              # Dashboard chính
+│   ├── api-test.html           # 🆕 Test REST API
+│   ├── css/
+│   │   └── styles.css
+│   └── js/
+│       ├── config.js
+│       ├── aws-signing.js
+│       ├── ui.js
+│       ├── mqtt-client.js
+│       └── app.js
+├── lambda/
+│   ├── iot_control_lambda.py   # 🆕 REST API cho LED control
+│   └── ota_trigger_lambda.py   # 🆕 REST API cho OTA update
+└── esp32/
+    └── ota_example.ino         # 🆕 ESP32 OTA code mẫu
+```
+
+---
+
+## TỔNG KẾT
+
+### 1. REST API (LED Control)
+
+| API | URL | Mô tả |
+|-----|-----|-------|
+| Bật đèn | `GET /led?action=on` | Publish `LED_ON` |
+| Tắt đèn | `GET /led?action=off` | Publish `LED_OFF` |
+| Lệnh custom | `POST /command` | Publish JSON body |
+
+**Các file liên quan:**
+- iot_control_lambda.py - Code Lambda
+- api-test.html - Trang test API
+
+### 2. OTA Update Flow
+
+```
+Developer → S3 (firmware) → Lambda (trigger) → MQTT → ESP32 → Reboot
+```
+
+**Quy trình:**
+1. Build firmware trên PlatformIO/Arduino IDE
+2. Upload `firmware.bin` lên S3
+3. Gọi API: `POST /ota/trigger` với version mới
+4. ESP32 nhận lệnh, download firmware, flash và reboot
+
+**Các file liên quan:**
+- ota_trigger_lambda.py - Lambda trigger OTA
+- ota_example.ino - ESP32 OTA handler
+
+### Chi phí bổ sung cho OTA:
+
+| Service | Free Tier | Ước tính |
+|---------|-----------|----------|
+| Lambda | 1M requests/tháng | $0 |
+| API Gateway | 1M requests/tháng (12 tháng đầu) | $0 |
+| S3 | 5GB storage | $0 (firmware rất nhỏ ~1MB) |
+
+Bạn muốn tôi hướng dẫn chi tiết bước nào không?
+
+Made changes.
+
+User: Tôi tạo ra rest api:
+https://17m1gspdzl.execute-api.eu-central-1.amazonaws.com/api_esp32/led?action=off
+
+Giá trị trả về: {"statusCode": 400, "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS"}, "body": "{\"error\": \"Invalid action. Use ?action=on or ?action=off\"}"}
+
+GitHub Copilot: Vấn đề là **API Gateway không truyền query parameters đến Lambda** đúng cách. Có 2 cách fix:
+
+## 🔧 CÁCH 1: Bật Lambda Proxy Integration (Khuyến nghị)
+
+### Bước thực hiện trong API Gateway Console:
+
+1. Vào **API Gateway** → Chọn API của bạn
+2. Click vào **GET** method dưới `/led`
+3. Click **"Integration Request"**
+4. Tìm **"Lambda Proxy Integration"** → ✅ **Tick chọn ON**
+5. Click **"Deploy API"** → Chọn stage `api_esp32`
+
+---
+
+## 🔧 CÁCH 2: Nếu đã bật Proxy nhưng vẫn lỗi
+
+Vấn đề có thể là event format. Tôi sẽ update Lambda code để debug và xử lý đúng: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+
+
+Using "Replace String in File"
+
+
+```
+
+```
+Bây giờ hãy **copy code mới vào Lambda**: 
+
+Read [](file:///d%3A/GIT/aws_iot_webapp/lambda/iot_control_lambda.py#1-1), lines 1 to 200
+
+## 🔍 DEBUG - Xem lỗi thực sự
+
+Từ response bạn nhận được, tôi thấy vấn đề:
+
+```json
+{
+  "debug": {
+    "queryStringParameters": null,  // ← Đây là vấn đề!
+    ...
+  }
+}
+```
+
+**Query parameters không được truyền vào Lambda.**
+
+---
+
+## ✅ CÁCH FIX: Cấu hình API Gateway đúng cách
+
+### Bước 1: Kiểm tra Integration Type
+
+1. Mở **API Gateway Console**
+2. Chọn API của bạn
+3. Click vào **/led** → **GET**
+4. Nhìn vào phần **Integration Request**
+
+### Bước 2: Đảm bảo Lambda Proxy Integration = ON
+
+![Lambda Proxy](https://docs.aws.amazon.com/apigateway/latest/developerguide/images/aws_proxy_checkbox.png)
+
+1. Click **"Integration Request"**
+2. Tick ✅ **"Use Lambda Proxy integration"**
+3. Lưu
+
+### Bước 3: Deploy lại API
+
+1. Click **"Actions"** → **"Deploy API"**
+2. Chọn stage: `api_esp32`
+3. Click **"Deploy"**
+
+### Bước 4: Test lại
+
+```
+https://17m1gspdzl.execute-api.eu-central-1.amazonaws.com/api_esp32/led?action=off
+```
+
+---
+
+## 🆕 PHƯƠNG ÁN THAY THẾ: Routing đơn giản hơn
+
+Nếu API Gateway của bạn gọi Lambda trực tiếp (không qua resource `/led`), hãy update code để xử lý mọi trường hợp: 
+
+Using "Replace String in File"
+
+
+```
+
+```
+Bây giờ hãy **copy toàn bộ code Lambda mới** và paste vào AWS Console: 
+
+Read [](file:///d%3A/GIT/aws_iot_webapp/lambda/iot_control_lambda.py)
+
+## ✅ HƯỚNG DẪN FIX
+
+### Bước 1: Copy code mới vào Lambda
+
+1. Mở **AWS Lambda Console** → Chọn function của bạn
+2. Trong tab **Code**, xóa code cũ
+3. Paste toàn bộ code từ file iot_control_lambda.py
+4. Click **Deploy**
+
+### Bước 2: Bật Lambda Proxy Integration
+
+1. Mở **API Gateway Console**
+2. Chọn API → Resources → **/led** → **GET**
+3. Click **Integration Request**
+4. ✅ Tick **"Use Lambda Proxy integration"** → Save
+5. **Actions** → **Deploy API** → Stage: `api_esp32`
+
+### Bước 3: Test lại
+
+```
+https://17m1gspdzl.execute-api.eu-central-1.amazonaws.com/api_esp32/led?action=on
+```
+
+Kết quả mong đợi:
+```json
+{
+  "success": true,
+  "message": "LED turned ON",
+  "topic": "cmd/esp32",
+  "payload": {
+    "command": "LED_ON",
+    "source": "REST_API",
+    "timestamp": "2026-01-09T..."
+  }
+}
+```
+
+---
+
+### 🔍 Nếu vẫn lỗi, xem CloudWatch Logs
+
+1. Mở **CloudWatch** → **Log groups**
+2. Tìm `/aws/lambda/YOUR_FUNCTION_NAME`
+3. Xem log mới nhất → Tìm dòng `Received event:` để thấy cấu trúc event thực sự
+
+Cho tôi biết kết quả sau khi thử nhé!
+
+Made changes.

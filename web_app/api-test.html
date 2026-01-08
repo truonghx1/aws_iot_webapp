@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REST API Test - ESP32 Control</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            min-height: 100vh;
+            padding: 20px;
+            color: #fff;
+        }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            background: linear-gradient(90deg, #ff6b6b, #ffa502);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+        .card h3 { color: #ffa502; margin-bottom: 15px; }
+        
+        .config-group { margin-bottom: 20px; }
+        .config-group label { display: block; margin-bottom: 8px; color: #ccc; }
+        .config-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-size: 14px;
+        }
+        .config-group input:focus {
+            outline: none;
+            border-color: #ffa502;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .btn {
+            padding: 15px 30px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .btn-on {
+            background: linear-gradient(135deg, #00ff88, #00cc6a);
+            color: #1a1a2e;
+        }
+        .btn-off {
+            background: linear-gradient(135deg, #ff4444, #cc0000);
+            color: white;
+        }
+        .btn-custom {
+            background: linear-gradient(135deg, #ffa502, #ff6b6b);
+            color: #1a1a2e;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .response-box {
+            background: #0d1117;
+            border-radius: 10px;
+            padding: 15px;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .response-box pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success { color: #00ff88; }
+        .error { color: #ff4444; }
+        .info { color: #00d4ff; }
+        
+        .url-display {
+            background: rgba(0,0,0,0.3);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            margin-bottom: 15px;
+            word-break: break-all;
+        }
+        
+        .method-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .method-get { background: #00ff88; color: #1a1a2e; }
+        .method-post { background: #ffa502; color: #1a1a2e; }
+        
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            background: rgba(0,0,0,0.3);
+            color: #fff;
+            font-family: monospace;
+            font-size: 14px;
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .example-urls {
+            font-size: 12px;
+            color: #888;
+            margin-top: 10px;
+        }
+        .example-urls code {
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 REST API Test - ESP32 Control</h1>
+        
+        <!-- Cấu hình -->
+        <div class="card">
+            <h3>⚙️ Cấu hình API</h3>
+            <div class="config-group">
+                <label>API Gateway URL (thay bằng URL của bạn):</label>
+                <input type="text" id="api-url" 
+                       placeholder="https://abc123xyz.execute-api.eu-central-1.amazonaws.com/prod"
+                       value="">
+            </div>
+            <div class="example-urls">
+                📌 Lấy URL từ: API Gateway Console → APIs → [API của bạn] → Stages → prod → Invoke URL
+            </div>
+        </div>
+        
+        <!-- GET Request Test -->
+        <div class="card">
+            <h3><span class="method-badge method-get">GET</span> Test bật/tắt đèn</h3>
+            <p style="color:#888; margin-bottom:15px">Gửi GET request với query parameter</p>
+            
+            <div class="url-display" id="get-url-preview">
+                GET /led?action=on
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-on" onclick="sendGetRequest('on')">💡 Bật Đèn (GET)</button>
+                <button class="btn btn-off" onclick="sendGetRequest('off')">🔌 Tắt Đèn (GET)</button>
+            </div>
+        </div>
+        
+        <!-- POST Request Test -->
+        <div class="card">
+            <h3><span class="method-badge method-post">POST</span> Gửi lệnh tùy chỉnh</h3>
+            <p style="color:#888; margin-bottom:15px">Gửi POST request với JSON body</p>
+            
+            <div class="config-group">
+                <label>JSON Body:</label>
+                <textarea id="post-body">{
+    "command": "LED_ON",
+    "data": {
+        "brightness": 100,
+        "color": "white"
+    }
+}</textarea>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-custom" onclick="sendPostRequest()">📤 Gửi POST Request</button>
+            </div>
+        </div>
+        
+        <!-- Response -->
+        <div class="card">
+            <h3>📨 Response</h3>
+            <div class="response-box" id="response-box">
+                <pre class="info">Chưa có response. Hãy thử gửi request...</pre>
+            </div>
+        </div>
+        
+        <!-- cURL Examples -->
+        <div class="card">
+            <h3>📋 cURL Commands (Copy để test)</h3>
+            <div class="response-box">
+                <pre style="color:#00d4ff"># Bật đèn (GET)
+curl -X GET "https://YOUR-API-URL/prod/led?action=on"
+
+# Tắt đèn (GET)  
+curl -X GET "https://YOUR-API-URL/prod/led?action=off"
+
+# Gửi lệnh tùy chỉnh (POST)
+curl -X POST "https://YOUR-API-URL/prod/command" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"LED_ON","data":{"brightness":50}}'</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Lấy API URL từ input
+        function getApiUrl() {
+            const url = document.getElementById('api-url').value.trim();
+            if (!url) {
+                alert('Vui lòng nhập API Gateway URL!');
+                return null;
+            }
+            return url.replace(/\/$/, ''); // Xóa trailing slash
+        }
+        
+        // Hiển thị response
+        function showResponse(data, isError = false) {
+            const box = document.getElementById('response-box');
+            const className = isError ? 'error' : 'success';
+            const timestamp = new Date().toLocaleTimeString('vi-VN');
+            
+            box.innerHTML = `<pre class="${className}">[${timestamp}]
+${JSON.stringify(data, null, 2)}</pre>`;
+        }
+        
+        // Gửi GET request
+        async function sendGetRequest(action) {
+            const baseUrl = getApiUrl();
+            if (!baseUrl) return;
+            
+            const url = `${baseUrl}/led?action=${action}`;
+            document.getElementById('get-url-preview').textContent = `GET ${url}`;
+            
+            try {
+                showResponse({ status: 'Đang gửi request...' });
+                
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                showResponse({
+                    status: response.status,
+                    statusText: response.ok ? 'OK' : 'Error',
+                    data: data
+                }, !response.ok);
+                
+            } catch (error) {
+                showResponse({
+                    error: 'Request failed',
+                    message: error.message,
+                    hint: 'Kiểm tra lại URL hoặc CORS settings'
+                }, true);
+            }
+        }
+        
+        // Gửi POST request
+        async function sendPostRequest() {
+            const baseUrl = getApiUrl();
+            if (!baseUrl) return;
+            
+            const url = `${baseUrl}/command`;
+            const body = document.getElementById('post-body').value;
+            
+            try {
+                // Validate JSON
+                JSON.parse(body);
+            } catch (e) {
+                showResponse({ error: 'Invalid JSON', message: e.message }, true);
+                return;
+            }
+            
+            try {
+                showResponse({ status: 'Đang gửi request...' });
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: body
+                });
+                
+                const data = await response.json();
+                showResponse({
+                    status: response.status,
+                    statusText: response.ok ? 'OK' : 'Error',
+                    data: data
+                }, !response.ok);
+                
+            } catch (error) {
+                showResponse({
+                    error: 'Request failed',
+                    message: error.message,
+                    hint: 'Kiểm tra lại URL hoặc CORS settings'
+                }, true);
+            }
+        }
+        
+        // Update URL preview khi thay đổi API URL
+        document.getElementById('api-url').addEventListener('input', function() {
+            const url = this.value.trim().replace(/\/$/, '');
+            if (url) {
+                document.getElementById('get-url-preview').textContent = `GET ${url}/led?action=on`;
+            }
+        });
+    </script>
+</body>
+</html>
