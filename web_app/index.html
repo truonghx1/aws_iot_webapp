@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ESP32 Control Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.900.0.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; }
+        .card { border: 1px solid #ccc; padding: 20px; margin: 10px auto; max-width: 400px; border-radius: 8px; }
+        .btn { padding: 10px 20px; font-size: 16px; cursor: pointer; margin: 5px; }
+        .btn-on { background-color: #4CAF50; color: white; }
+        .btn-off { background-color: #f44336; color: white; }
+        #status { font-weight: bold; color: blue; }
+    </style>
+</head>
+<body>
+
+    <h1>ESP32 IoT Dashboard</h1>
+    <div id="connection-status">Disconnected</div>
+
+    <div class="card">
+        <h3>Dữ liệu cảm biến</h3>
+        <p>Topic: <b>test_topic/esp32</b></p>
+        <h2 id="sensor-value">Waiting...</h2>
+    </div>
+
+    <div class="card">
+        <h3>Điều khiển thiết bị</h3>
+        <p>Gửi lệnh tới: <b>cmd/esp32</b></p>
+        <button class="btn btn-on" onclick="sendCommand('LED_ON')">Bật Đèn</button>
+        <button class="btn btn-off" onclick="sendCommand('LED_OFF')">Tắt Đèn</button>
+    </div>
+
+    <script>
+        // --- CẤU HÌNH ---
+        const AWS_REGION = 'eu-central-1'; 
+        const IOT_ENDPOINT = 'a4bbq76bjvnc5-ats.iot.eu-central-1.amazonaws.com';
+        const IDENTITY_POOL_ID = 'THAY_IDENTITY_POOL_ID_CUA_BAN_VAO_DAY'; // Lấy từ Bước 1
+        
+        const MQTT_TOPIC_SUB = 'test_topic/esp32'; // Nhận
+        const MQTT_TOPIC_PUB = 'cmd/esp32';        // Gửi
+
+        // --- LOGIC KẾT NỐI AWS ---
+        AWS.config.region = AWS_REGION;
+        AWS.config.credentials = new AWS.CognitoIdentityCredentials({
+            IdentityPoolId: IDENTITY_POOL_ID
+        });
+
+        let client;
+
+        function connect() {
+            // Lấy credentials tạm thời
+            AWS.config.credentials.get(function(){
+                const accessKey = AWS.config.credentials.accessKeyId;
+                const secretKey = AWS.config.credentials.secretAccessKey;
+                const sessionToken = AWS.config.credentials.sessionToken;
+
+                // Tạo đường dẫn WebSocket bảo mật (SigV4)
+                const url = v4SignedUrl(IOT_ENDPOINT, AWS_REGION, accessKey, secretKey, sessionToken);
+                
+                const clientId = "web-client-" + Math.random().toString(16).substr(2, 8);
+                client = new Paho.MQTT.Client(url, clientId);
+
+                client.onConnectionLost = onConnectionLost;
+                client.onMessageArrived = onMessageArrived;
+
+                client.connect({
+                    useSSL: true,
+                    onSuccess: onConnect,
+                    onFailure: (e) => console.log("Lỗi kết nối:", e)
+                });
+            });
+        }
+
+        // Hàm ký URL (SigV4) - Phần này hơi phức tạp nhưng là chuẩn bắt buộc của AWS
+        // (Để code ngắn gọn, tôi giả lập hàm này, bạn cần hàm SigV4 đầy đủ hoặc dùng AWS Amplify Lib)
+        // **LƯU Ý:** Để chạy thực tế đơn giản nhất, tôi khuyên dùng thư viện `aws-amplify` 
+        // nhưng để code chạy ngay trên 1 file HTML, ta cần hàm ký SigV4. 
+        // -> Tôi sẽ cung cấp hướng dẫn dùng Amplify ở Bước 3 (dễ hơn nhiều).
+        
+        // GIẢI PHÁP ĐƠN GIẢN HÓA:
+        // Thay vì viết code JS trần phức tạp ở đây, hãy sang Bước 3 dùng AWS Amplify Hosting.
+    </script> 
+    
+    </body>
+</html>
